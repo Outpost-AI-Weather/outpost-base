@@ -1,40 +1,14 @@
-"""Load decoder-format JSON Lines mock data into the database."""
+"""Load decoder-format JSON Lines readings into the database through ingest."""
 
 import argparse
 import json
-from datetime import UTC, datetime
+from collections import Counter
 from pathlib import Path
 
 from sqlmodel import Session, SQLModel
 
-from outpost_base.db.models import Node, Reading
 from outpost_base.db.session import create_db_and_tables, engine
-
-
-def to_utc(timestamp: str) -> datetime:
-    """Parse an ISO 8601 UTC time, keeping the UTC timezone."""
-    return datetime.fromisoformat(timestamp).astimezone(UTC)
-
-
-def to_reading(data: dict) -> Reading:
-    raw_hex = data.get("raw_payload_hex")
-    return Reading(
-        node_id=data["node_id"],
-        sequence=data["sequence"],
-        node_timestamp=data["node_timestamp"],
-        received_at=to_utc(data["received_at"]),        temperature_c=data["temperature_c"],
-        humidity_pct=data["humidity_pct"],
-        pressure_pa=data["pressure_pa"],
-        wind_speed_ms=data["wind_speed_ms"],
-        wind_direction_deg=data["wind_direction_deg"],
-        battery_mv=data["battery_mv"],
-        status_flags=data["status_flags"],
-        faults=data["faults"],
-        rssi_dbm=data["rssi_dbm"],
-        snr_db=data["snr_db"],
-        protocol_version=data["protocol_version"],
-        raw_payload=bytes.fromhex(raw_hex) if raw_hex else None,
-    )
+from outpost_base.ingest.ingest import ingest_reading
 
 
 def main():
@@ -47,26 +21,35 @@ def main():
         SQLModel.metadata.drop_all(engine)
     create_db_and_tables()
 
-    lines = Path(args.input).read_text().splitlines()
-    readings = [to_reading(json.loads(line)) for line in lines if line.strip()]
+    statuses = Counter()
+    rejected_reasons = Counter()
+    nulled_fields = Counter()
+    gap_events = 0
+    missed_total = 0
 
     with Session(engine) as session:
-        for node_id in {r.node_id for r in readings}:
-            if session.get(Node, node_id) is None:
-                session.add(Node(node_id=node_id, name=f"Node {node_id}"))
-        session.commit()
+        for line in Path(args.input).read_text().splitlines():
+            if not line.strip():
+                continue
+            result = ingest_reading(session, json.loads(line))
 
-        session.add_all(readings)
+            statuses[result.status] += 1
+            if result.reason:
+                rejected_reasons[result.reason] += 1
+            for name in result.nulled_fields:
+                nulled_fields[name] += 1
+            if result.missed_packets:
+                gap_events += 1
+                missed_total += result.missed_packets
 
-        latest = max(readings, key=lambda r: r.received_at)
-        node = session.get(Node, latest.node_id)
-        node.protocol_version = latest.protocol_version
-        node.last_packet_at = latest.received_at
-        node.last_status_flags = latest.status_flags
-
-        session.commit()
-
-    print(f"Loaded {len(readings)} readings from {args.input}")
+    print(f"Ingested {args.input}")
+    print(f"  Saved:              {statuses['saved']}")
+    print(f"  Duplicates skipped: {statuses['duplicate']}")
+    print(f"  Rejected:           {statuses['rejected']}")
+    for reason, count in rejected_reasons.items():
+        print(f"    {reason}: {count}")
+    print(f"  Gaps detected:      {gap_events} ({missed_total} missed packets)")
+    print(f"  Values nulled as implausible: {dict(nulled_fields) or 'none'}")
 
 
 if __name__ == "__main__":
