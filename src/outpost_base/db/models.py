@@ -16,6 +16,7 @@ class Node(SQLModel, table=True):
     installed_at: datetime | None = None
     last_packet_at: datetime | None = None
     last_status_flags: int | None = None
+    last_sequence: int | None = None
 
 
 class Reading(SQLModel, table=True):
@@ -26,6 +27,7 @@ class Reading(SQLModel, table=True):
     sequence: int
     node_timestamp: int | None = None
     received_at: datetime = Field(index=True)
+    measured_at: datetime | None = None
     temperature_c: float | None = None
     humidity_pct: float | None = None
     pressure_pa: int | None = None
