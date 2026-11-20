@@ -1,23 +1,13 @@
-"""Print stats for a given time, for checking the stats engine by hand."""
+"""Print the full stats payload for a given time."""
 
 import argparse
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlmodel import Session
 
 from outpost_base.db.session import engine
-from outpost_base.stats.engine import (
-    compare_with_yesterday,
-    current_conditions,
-    load_readings,
-)
-from outpost_base.stats.trends import (
-    data_quality,
-    pressure_tendency,
-    seven_day_trend,
-    yesterday_temperature_range,
-)
+from outpost_base.stats.builder import build_stats
 
 
 def main():
@@ -26,23 +16,10 @@ def main():
     parser.add_argument("--node", type=int, default=1)
     args = parser.parse_args()
 
-    at = datetime.fromisoformat(args.at)
     with Session(engine) as session:
-        df = load_readings(session, args.node, at - timedelta(days=9), at)
+        stats = build_stats(session, args.node, datetime.fromisoformat(args.at))
 
-    current = current_conditions(df, at)
-    print(json.dumps(current, indent=2, ensure_ascii=False))
-
-    if current:
-        now = datetime.fromisoformat(current["measured_at"])
-        for result in [
-            compare_with_yesterday(df, now),
-            seven_day_trend(df, now),
-            yesterday_temperature_range(df, now),
-            pressure_tendency(df, now),
-            data_quality(df, now),
-        ]:
-            print(json.dumps(result, indent=2, ensure_ascii=False))
+    print(json.dumps(stats, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
