@@ -7,7 +7,17 @@ from datetime import datetime, timedelta
 from sqlmodel import Session
 
 from outpost_base.db.session import engine
-from outpost_base.stats.engine import current_conditions, load_readings
+from outpost_base.stats.engine import (
+    compare_with_yesterday,
+    current_conditions,
+    load_readings,
+)
+from outpost_base.stats.trends import (
+    data_quality,
+    pressure_tendency,
+    seven_day_trend,
+    yesterday_temperature_range,
+)
 
 
 def main():
@@ -18,9 +28,21 @@ def main():
 
     at = datetime.fromisoformat(args.at)
     with Session(engine) as session:
-        df = load_readings(session, args.node, at - timedelta(days=8), at)
+        df = load_readings(session, args.node, at - timedelta(days=9), at)
 
-    print(json.dumps(current_conditions(df, at), indent=2, ensure_ascii=False))
+    current = current_conditions(df, at)
+    print(json.dumps(current, indent=2, ensure_ascii=False))
+
+    if current:
+        now = datetime.fromisoformat(current["measured_at"])
+        for result in [
+            compare_with_yesterday(df, now),
+            seven_day_trend(df, now),
+            yesterday_temperature_range(df, now),
+            pressure_tendency(df, now),
+            data_quality(df, now),
+        ]:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
